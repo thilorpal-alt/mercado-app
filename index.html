@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Mercado & Receitas - Lista Inteligente</title>
+  
+  <!-- PWA Metadata -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#16a34a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Mercado">
+  
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- HTML5 QR Code Scanner -->
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0fdf4',
+              100: '#dcfce7',
+              500: '#22c55e',
+              600: '#16a34a',
+              700: '#15803d',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Mobile-optimized smooth touch */
+    * {
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    input, textarea {
+      user-select: auto;
+    }
+    /* Hide scrollbar for tabs */
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    .pulse-ring {
+      animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+    }
+    @keyframes pulse-ring {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.15); opacity: 0.3; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col antialiased pb-24 md:pb-6">
+
+  <!-- TOP HEADER -->
+  <header class="bg-emerald-600 text-white sticky top-0 z-30 shadow-md">
+    <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center space-x-2">
+        <div class="bg-white/20 p-2 rounded-xl backdrop-blur-sm">
+          <i data-lucide="shopping-cart" class="w-6 h-6"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-lg leading-tight flex items-center gap-1.5">
+            Mercado & Preços
+            <span class="text-[10px] bg-emerald-500/80 px-2 py-0.5 rounded-full font-medium">SC</span>
+          </h1>
+          <p class="text-xs text-emerald-100 font-normal" id="headerSubtitle">Lista inteligente & NFC-e</p>
+        </div>
+      </div>
+
+      <div class="flex items-center space-x-2">
+        <!-- Status Indicator -->
+        <button onclick="switchTab('tab-settings')" class="p-2 rounded-full hover:bg-white/10 active:bg-white/20 transition relative">
+          <i data-lucide="settings" class="w-5 h-5"></i>
+          <span id="geminiBadge" class="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-amber-400 border-2 border-emerald-600 rounded-full" title="Chave Gemini não configurada"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- DESKTOP TOP NAV -->
+    <div class="hidden md:block bg-emerald-700/60 border-t border-emerald-500/30">
+      <div class="max-w-3xl mx-auto px-4 flex space-x-1">
+        <button onclick="switchTab('tab-shopping')" class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-white text-white flex items-center gap-2" data-target="tab-shopping">
+          <i data-lucide="check-square" class="w-4 h-4"></i> Lista de Compras
+        </button>
+        <button onclick="switchTab('tab-catalog')" class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-emerald-100 hover:text-white flex items-center gap-2" data-target="tab-catalog">
+          <i data-lucide="layers" class="w-4 h-4"></i> Lista Geral (Repositório)
+          <span id="desktopCatalogBadge" class="bg-emerald-800 text-[10px] px-1.5 py-0.5 rounded-full text-emerald-200">0</span>
+        </button>
+        <button onclick="switchTab('tab-receipt')" class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-emerald-100 hover:text-white flex items-center gap-2" data-target="tab-receipt">
+          <i data-lucide="receipt" class="w-4 h-4"></i> Escanear Nota
+        </button>
+        <button onclick="switchTab('tab-prices')" class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-emerald-100 hover:text-white flex items-center gap-2" data-target="tab-prices">
+          <i data-lucide="trending-up" class="w-4 h-4"></i> Preços & Histórico
+        </button>
+        <button onclick="switchTab('tab-recipes')" class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-emerald-100 hover:text-white flex items-center gap-2" data-target="tab-recipes">
+          <i data-lucide="chef-hat" class="w-4 h-4"></i> Chef Gemini
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN CONTAINER -->
+  <main class="max-w-3xl w-full mx-auto px-3 sm:px-4 py-4 flex-1">
+
+    <!-- ==================== TAB 1: LISTA DE COMPRAS (LISTONIC STYLE) ==================== -->
+    <section id="tab-shopping" class="tab-content block">
+      
+      <!-- QUICK ADD BAR -->
+      <div class="bg-white rounded-2xl p-3 shadow-sm border border-slate-200/80 mb-4 sticky top-16 z-20">
+        <form id="addForm" onsubmit="handleAddItem(event)" class="space-y-2">
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1">
+              <input 
+                type="text" 
+                id="itemInput" 
+                placeholder="Ex: Leite Integral, 1kg Café, Tomate..." 
+                class="w-full pl-3.5 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition"
+                autocomplete="off"
+              />
+              <button 
+                type="button" 
+                onclick="toggleVoiceInput()" 
+                id="micBtn"
+                class="absolute right-2 top-2 p-1.5 text-slate-400 hover:text-emerald-600 rounded-lg hover:bg-slate-100 transition" 
+                title="Falar itens por voz"
+              >
+                <i data-lucide="mic" class="w-4 h-4"></i>
+              </button>
+            </div>
+            
+            <button 
+              type="submit" 
+              class="bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-medium px-4 py-2.5 rounded-xl text-sm flex items-center gap-1.5 shadow-sm transition"
+            >
+              <i data-lucide="plus" class="w-4 h-4"></i>
+              <span class="hidden sm:inline">Adicionar</span>
+            </button>
+          </div>
+
+          <!-- Lembrete opcional para o item (ex: peça inteira, receita X) -->
+          <input
+            type="text"
+            id="itemNoteInput"
+            maxlength="200"
+            placeholder="📝 Lembrete (opcional): ex. peça inteira, pouca gordura, para a receita X"
+            class="w-full px-3.5 py-2 bg-amber-50/60 border border-amber-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 focus:bg-white transition"
+            autocomplete="off"
+          />
+
+          <!-- Quick category selector & voice status indicator -->
+          <div id="voiceStatus" class="hidden text-xs py-1.5 px-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg flex items-center justify-between">
+            <span class="flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+              Ouvindo... Fale os itens (ex: "comprar 2 leites e meio quilo de café")
+            </span>
+            <button type="button" onclick="stopVoiceInput()" class="text-xs font-semibold text-emerald-700 underline">Parar</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- SUMMARY & ACTIONS -->
+      <div class="flex items-center justify-between text-xs font-medium text-slate-500 px-1 mb-3">
+        <div class="flex items-center gap-2">
+          <span id="activeCountBadge" class="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md font-semibold">0 a comprar</span>
+          <span id="checkedCountBadge" class="bg-slate-200 text-slate-700 px-2 py-0.5 rounded-md">0 no carrinho</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="clearCompletedItems()" class="text-slate-400 hover:text-red-600 flex items-center gap-1 transition">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Limpar comprados
+          </button>
+        </div>
+      </div>
+
+      <!-- REPOSITÓRIO / LISTA GERAL BANNER -->
+      <div class="bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border border-emerald-200/80 rounded-2xl p-3 mb-4 flex items-center justify-between shadow-xs">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+            <i data-lucide="layers" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h4 class="text-xs font-bold text-slate-800">Lista Geral de Lembretes</h4>
+            <p class="text-[11px] text-slate-500">Percorra seu catálogo habitual e toque para adicionar à lista viva</p>
+          </div>
+        </div>
+        <button onclick="switchTab('tab-catalog')" class="bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 text-xs font-semibold px-3 py-1.5 rounded-xl flex items-center gap-1 transition shadow-2xs shrink-0">
+          <span>Abrir</span>
+          <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+
+      <!-- ACTIVE SHOPPING LIST (GROUPED BY CATEGORY) -->
+      <div id="activeListContainer" class="space-y-4">
+        <!-- Rendered dynamically -->
+        <div class="text-center py-12 text-slate-400">
+          <i data-lucide="shopping-basket" class="w-12 h-12 mx-auto stroke-1 mb-2 opacity-50"></i>
+          <p class="text-sm">Sua lista está vazia!</p>
+          <p class="text-xs text-slate-400 mt-1">Digite acima ou fale pelo microfone para adicionar.</p>
+        </div>
+      </div>
+
+      <!-- COMPLETED ITEMS SECTION ("NO CARRINHO / COMPRADOS") -->
+      <div id="completedSection" class="mt-8 hidden">
+        <button onclick="toggleCompletedAccordion()" class="w-full flex items-center justify-between py-2 px-3 bg-slate-200/70 hover:bg-slate-200 rounded-xl text-xs font-semibold text-slate-600 transition mb-2">
+          <span class="flex items-center gap-1.5">
+            <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i>
+            No Carrinho / Já Comprados (<span id="completedCountNum">0</span>)
+          </span>
+          <i data-lucide="chevron-down" id="completedChevron" class="w-4 h-4 transition-transform"></i>
+        </button>
+
+        <div id="completedListContainer" class="space-y-2 hidden">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ==================== TAB 1B: LISTA GERAL / REPOSITÓRIO (LISTONIC STYLE) ==================== -->
+    <section id="tab-catalog" class="tab-content hidden">
+      <!-- HEADER CARD -->
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 mb-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3 mb-3">
+          <div>
+            <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+              <i data-lucide="layers" class="w-5 h-5 text-emerald-600"></i>
+              Lista Geral (Repositório de Itens)
+            </h2>
+            <p class="text-xs text-slate-500 mt-0.5">
+              Toque em qualquer item para adicionar ou remover da sua <b>Lista Viva de Compras</b>.
+            </p>
+          </div>
+          
+          <button onclick="switchTab('tab-shopping')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3.5 py-2 rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition shrink-0">
+            <i data-lucide="shopping-cart" class="w-4 h-4"></i>
+            <span>Ir para a Lista Viva</span>
+            <span id="catalogToLiveCountBadge" class="bg-white text-emerald-800 text-[10px] font-bold px-1.5 py-0.2 rounded-full ml-0.5">0</span>
+          </button>
+        </div>
+
+        <!-- SEARCH BAR -->
+        <div class="relative mb-3">
+          <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-slate-400"></i>
+          <input 
+            type="text" 
+            id="catalogSearchInput" 
+            oninput="handleCatalogSearch(this.value)" 
+            placeholder="Buscar itens no repositório (ex: banana, leite, arroz, sabão)..." 
+            class="w-full pl-9 pr-9 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition"
+          />
+          <button id="catalogSearchClearBtn" onclick="clearCatalogSearch()" class="hidden absolute right-3 top-2.5 text-slate-400 hover:text-slate-600">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+
+        <!-- CATEGORY PILLS -->
+        <div id="catalogCategoryPills" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 text-xs">
+          <!-- Rendered dynamically -->
+        </div>
+
+        <!-- QUICK ADD NEW ITEM TO CATALOG -->
+        <div class="mt-3 pt-3 border-t border-slate-100 flex items-center gap-2">
+          <input 
+            type="text" 
+            id="newCatalogItemInput" 
+            placeholder="+ Cadastrar novo item no repositório geral..." 
+            class="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            onkeydown="if(event.key === 'Enter') handleAddCatalogItem()"
+          />
+          <button onclick="handleAddCatalogItem()" class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shrink-0">
+            Salvar
+          </button>
+        </div>
+      </div>
+
+      <!-- COUNTER BAR -->
+      <div class="flex items-center justify-between text-xs font-medium text-slate-500 px-1 mb-2.5">
+        <span id="catalogItemsStats">Carregando repositório...</span>
+        <span class="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md font-medium flex items-center gap-1">
+          <i data-lucide="check" class="w-3 h-3"></i> Verde = Na lista de compras
+        </span>
+      </div>
+
+      <!-- CATALOG ITEMS CONTAINER (GROUPED BY CATEGORY) -->
+      <div id="catalogContainer" class="space-y-4">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- ==================== TAB 2: ESCANEAR NOTA FISCAL (NFC-e SC / FOTO IA) ==================== -->
+    <section id="tab-receipt" class="tab-content hidden">
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 mb-4">
+        <h2 class="text-base font-bold text-slate-800 flex items-center gap-2 mb-1">
+          <i data-lucide="scan" class="w-5 h-5 text-emerald-600"></i>
+          Leitor de Cupom Fiscal (SC)
+        </h2>
+        <p class="text-xs text-slate-500 mb-4">
+          Chegou do supermercado? Aponte a câmera para o QR Code da nota fiscal ou tire uma foto para dar baixa automática naquilo que comprou!
+        </p>
+
+        <!-- SCAN MODE SELECTOR -->
+        <div class="grid grid-cols-2 gap-2 mb-4 p-1 bg-slate-100 rounded-xl">
+          <button onclick="setScanMode('qr')" id="btnModeQr" class="py-2 text-xs font-semibold rounded-lg bg-white text-emerald-700 shadow-sm flex items-center justify-center gap-1.5 transition">
+            <i data-lucide="qr-code" class="w-4 h-4"></i> Ler QR Code
+          </button>
+          <button onclick="setScanMode('photo')" id="btnModePhoto" class="py-2 text-xs font-semibold rounded-lg text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1.5 transition">
+            <i data-lucide="camera" class="w-4 h-4"></i> Foto da Nota (IA)
+          </button>
+        </div>
+
+        <!-- QR CODE SCANNER VIEW -->
+        <div id="viewQrScan" class="space-y-3">
+          <div id="qr-reader" class="w-full rounded-xl overflow-hidden border border-slate-200 bg-black min-h-[260px] flex items-center justify-center text-white text-xs">
+            <!-- Camera stream renders here -->
+          </div>
+
+          <div class="flex items-center justify-center gap-2">
+            <button onclick="startQrScanner()" id="btnStartQr" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-4 rounded-xl text-sm flex items-center justify-center gap-2 transition">
+              <i data-lucide="camera" class="w-4 h-4"></i> Ligar Câmera do QR Code
+            </button>
+            <button onclick="stopQrScanner()" id="btnStopQr" class="hidden bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium py-2.5 px-4 rounded-xl text-sm flex items-center justify-center gap-2 transition">
+              <i data-lucide="square" class="w-4 h-4"></i> Parar
+            </button>
+          </div>
+
+          <!-- Manual QR Link Input fallback -->
+          <div class="pt-2 border-t border-slate-100">
+            <details class="text-xs text-slate-500">
+              <summary class="cursor-pointer hover:text-emerald-600 font-medium py-1">Ou colar link da SEFAZ manualmente</summary>
+              <div class="flex gap-2 mt-2">
+                <input type="url" id="manualQrUrl" placeholder="http://sat.sef.sc.gov.br/nfce/consulta?p=..." class="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-emerald-500">
+                <button onclick="submitManualQrUrl()" class="px-3 py-2 bg-slate-800 text-white rounded-lg text-xs font-semibold">Consultar</button>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <!-- PHOTO UPLOAD VIEW (GEMINI VISION OCR) -->
+        <div id="viewPhotoScan" class="hidden space-y-3">
+          <div class="border-2 border-dashed border-emerald-300 bg-emerald-50/50 rounded-2xl p-6 text-center hover:bg-emerald-50 transition cursor-pointer relative" onclick="document.getElementById('receiptFileInput').click()">
+            <input type="file" id="receiptFileInput" accept="image/*" capture="environment" class="hidden" onchange="handleReceiptFileSelected(event)">
+            
+            <div id="photoPlaceholder">
+              <div class="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-2">
+                <i data-lucide="camera" class="w-6 h-6"></i>
+              </div>
+              <p class="text-sm font-semibold text-slate-700">Tirar foto ou escolher cupom</p>
+              <p class="text-xs text-slate-500 mt-1">A IA do Gemini lê todos os itens, preços e supermercado com 100% de precisão.</p>
+            </div>
+
+            <!-- Preview Container -->
+            <div id="photoPreviewContainer" class="hidden">
+              <img id="photoPreviewImg" class="max-h-64 mx-auto rounded-lg shadow-sm border border-slate-200 object-contain mb-3">
+              <button type="button" onclick="event.stopPropagation(); processReceiptPhoto()" id="btnProcessPhoto" class="bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-6 rounded-xl text-sm flex items-center justify-center gap-2 mx-auto shadow-md transition">
+                <i data-lucide="sparkles" class="w-4 h-4"></i> Ler Cupom com IA
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- PROCESSING SPINNER -->
+        <div id="receiptLoading" class="hidden py-8 text-center">
+          <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-emerald-600 border-t-transparent mb-2"></div>
+          <p class="text-sm font-semibold text-slate-700">Lendo cupom fiscal...</p>
+          <p class="text-xs text-slate-400">Identificando produtos, preços e dando baixa na lista...</p>
+        </div>
+
+      </div>
+
+      <!-- RECONCILIATION MODAL / RESULT -->
+      <div id="reconciliationContainer" class="hidden bg-white rounded-2xl p-4 shadow-sm border border-slate-200">
+        <!-- Rendered after scan -->
+      </div>
+    </section>
+
+    <!-- ==================== TAB 3: PREÇOS & HISTÓRICO ==================== -->
+    <section id="tab-prices" class="tab-content hidden">
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 mb-4">
+        <h2 class="text-base font-bold text-slate-800 flex items-center gap-2 mb-1">
+          <i data-lucide="trending-up" class="w-5 h-5 text-emerald-600"></i>
+          Histórico de Preços por Item
+        </h2>
+        <p class="text-xs text-slate-500 mb-4">
+          Veja quanto pagou na última compra, onde comprou mais barato e o histórico de cada produto.
+        </p>
+
+        <!-- Search Bar -->
+        <div class="relative mb-4">
+          <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-3"></i>
+          <input 
+            type="text" 
+            id="productSearchInput" 
+            placeholder="Buscar produto cadastrado..." 
+            class="w-full pl-9 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            oninput="handleSearchProducts(this.value)"
+          />
+        </div>
+
+        <!-- Products List -->
+        <div id="productsListContainer" class="space-y-2">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+
+      <!-- MODAL: ITEM PRICE HISTORY DETAIL -->
+      <div id="productDetailModal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl animate-in slide-in-from-bottom">
+          <div class="p-4 border-b border-slate-100 flex items-center justify-between">
+            <h3 class="font-bold text-slate-800 text-base" id="modalProductName">Histórico de Preço</h3>
+            <button onclick="closeProductDetailModal()" class="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100">
+              <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+          </div>
+          <div class="p-4 overflow-y-auto space-y-4 flex-1" id="modalProductContent">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 4: RECEITAS & DESPENSA (CHEF GEMINI) ==================== -->
+    <section id="tab-recipes" class="tab-content hidden">
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+            <i data-lucide="chef-hat" class="w-5 h-5 text-emerald-600"></i>
+            Chef Inteligente Gemini
+          </h2>
+          <button onclick="openExportModal()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg font-medium flex items-center gap-1 transition">
+            <i data-lucide="share-2" class="w-3.5 h-3.5"></i> Exportar Despensa
+          </button>
+        </div>
+        <p class="text-xs text-slate-500 mb-4">
+          O Chef analisa os itens da sua última compra e sugere pratos incríveis, apontando apenas o que falta comprar!
+        </p>
+
+        <!-- Prompt preference -->
+        <div class="space-y-3 mb-4">
+          <input 
+            type="text" 
+            id="recipeCravingInput" 
+            placeholder="Algum desejo especial? Ex: 'algo rápido com carne', 'sobremesa fácil'..." 
+            class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500"
+          />
+          <button 
+            onclick="requestRecipeSuggestions()" 
+            id="btnSuggestRecipes"
+            class="w-full bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-medium py-3 px-4 rounded-xl text-sm flex items-center justify-center gap-2 shadow-sm transition"
+          >
+            <i data-lucide="sparkles" class="w-4 h-4"></i> Sugerir Receitas com o que Tenho em Casa
+          </button>
+        </div>
+
+        <!-- Recipe Suggestions Container -->
+        <div id="recipeResultsContainer" class="space-y-4">
+          <!-- Rendered dynamically -->
+        </div>
+
+        <!-- Current Pantry Preview Accordion -->
+        <div class="mt-6 pt-4 border-t border-slate-100">
+          <details class="text-xs text-slate-600">
+            <summary class="font-semibold cursor-pointer text-slate-700 flex items-center justify-between py-1">
+              <span>Ingredientes registrados em casa (<span id="pantryCountNum">0</span>)</span>
+              <span class="text-emerald-600 font-normal">Ver lista</span>
+            </summary>
+            <div id="pantryItemsList" class="mt-2 space-y-1 max-h-48 overflow-y-auto pt-1">
+              <!-- Rendered dynamically -->
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 5: CONFIGURAÇÕES ==================== -->
+    <section id="tab-settings" class="tab-content hidden">
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 space-y-4">
+        <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+          <i data-lucide="settings" class="w-5 h-5 text-emerald-600"></i>
+          Configurações do Aplicativo
+        </h2>
+
+        <!-- Gemini API Key -->
+        <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+          <label class="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+            <span>Chave de API do Gemini (Google AI Studio)</span>
+            <span id="keyStatusBadge" class="text-[10px] font-normal px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">Verificando...</span>
+          </label>
+          <p class="text-[11px] text-slate-500 mb-2">
+            Usada para leitura da foto do cupom fiscal, entrada de voz inteligente e receitas do Chef.
+          </p>
+          <div class="flex gap-2">
+            <input 
+              type="password" 
+              id="geminiApiKeyInput" 
+              placeholder="Cole sua chave AIzaSy..." 
+              class="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-emerald-500"
+            />
+            <button onclick="saveApiKey()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-xs transition">
+              Salvar
+            </button>
+          </div>
+          <p class="text-[10px] text-slate-400 mt-2">
+            A chave fica salva exclusivamente de forma local no seu banco de dados. Obtenha gratuitamente em: 
+            <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-emerald-600 underline">Google AI Studio</a>.
+          </p>
+        </div>
+
+        <!-- Google Sheets Direct Online Sync -->
+        <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+              <i data-lucide="sheet" class="w-4 h-4 text-emerald-600"></i>
+              Sincronização Direta com Planilha Online (Google Sheets)
+            </h3>
+            <span id="sheetsStatusBadge" class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">Não configurado</span>
+          </div>
+          <p class="text-[11px] text-slate-600 leading-relaxed">
+            Conecte diretamente a sua planilha do Google Drive para que ela seja atualizada automaticamente sempre que você registrar compras ou escanear uma nota fiscal.
+          </p>
+
+          <!-- Webhook URL input -->
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-700 mb-1">URL do Webhook do Google Sheets (Apps Script):</label>
+            <div class="flex gap-2">
+              <input 
+                type="url" 
+                id="sheetsWebhookInput" 
+                placeholder="https://script.google.com/macros/s/.../exec" 
+                class="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-emerald-500"
+              />
+              <button onclick="saveSheetsSettings()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-2 rounded-lg text-xs transition">
+                Salvar
+              </button>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 pt-1">
+            <button onclick="triggerDirectSheetsSync()" id="btnSyncSheetsNow" class="flex-1 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition">
+              <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Sincronizar com a Planilha Agora
+            </button>
+            <button onclick="showAppsScriptGuide()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold py-2 px-3 rounded-lg flex items-center gap-1 transition">
+              <i data-lucide="code" class="w-3.5 h-3.5"></i> Ver Script (Como Ativar)
+            </button>
+          </div>
+        </div>
+
+        <!-- Backup e sincronização (Google Drive via Apps Script) -->
+        <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">
+          <h3 class="text-xs font-bold text-slate-800">Backup e Sincronização (Google Drive)</h3>
+          <p class="text-[11px] text-slate-600 leading-relaxed">Seus dados ficam neste aparelho. Para salvar no Drive e sincronizar com o computador, cole a URL do Apps Script e o código secreto (os mesmos nos dois aparelhos).</p>
+          <input type="url" id="backupUrlInput" placeholder="https://script.google.com/macros/s/.../exec" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono">
+          <input type="password" id="backupCodeInput" placeholder="Código secreto" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs">
+          <div class="grid grid-cols-2 gap-2">
+            <button onclick="saveBackupSettings()" class="bg-emerald-600 text-white text-xs font-semibold py-2 rounded-lg">Salvar e sincronizar</button>
+            <button onclick="syncDrive()" class="bg-slate-800 text-white text-xs font-semibold py-2 rounded-lg">Sincronizar agora</button>
+            <button onclick="exportBackup()" class="bg-slate-200 text-slate-700 text-xs font-semibold py-2 rounded-lg">Exportar / Compartilhar</button>
+            <button onclick="document.getElementById('importBackupFile').click()" class="bg-slate-200 text-slate-700 text-xs font-semibold py-2 rounded-lg">Importar arquivo</button>
+          </div>
+          <input type="file" id="importBackupFile" accept=".json,application/json" class="hidden" onchange="importBackup(event)">
+          <p id="syncStatus" class="text-[11px] text-slate-500"></p>
+        </div>
+
+        <!-- Santa Catarina NFC-e info -->
+        <div class="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100 text-[11px] text-emerald-900 leading-relaxed">
+          <strong>Santa Catarina (SEFAZ-SC):</strong> Os cupons fiscais emitidos em SC (SAT / NFC-e) são totalmente suportados. Caso a SEFAZ solicite captcha no portal web, a opção de Foto da Nota com IA lê instantaneamente todos os itens sem depender do servidor do governo.
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==================== EXPORT MODAL ==================== -->
+  <div id="exportModal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-md rounded-2xl p-4 shadow-xl space-y-3">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+        <h3 class="font-bold text-sm text-slate-800">Exportar Despensa</h3>
+        <button onclick="closeExportModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <p class="text-xs text-slate-500">Escolha o formato que deseja:</p>
+      
+      <div class="space-y-2">
+        <button onclick="copyGeminiPrompt()" class="w-full p-3 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-xl text-left transition flex items-center justify-between">
+          <div>
+            <p class="text-xs font-bold text-emerald-800">Copiar Texto para Gemini Gem</p>
+            <p class="text-[10px] text-emerald-600">Formato limpo pronto para colar no chat da sua Gem</p>
+          </div>
+          <i data-lucide="copy" class="w-4 h-4 text-emerald-700"></i>
+        </button>
+
+        <button onclick="downloadCsvFile()" class="w-full p-3 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-xl text-left transition flex items-center justify-between">
+          <div>
+            <p class="text-xs font-bold text-slate-800">Baixar CSV para Google Sheets</p>
+            <p class="text-[10px] text-slate-500">Arquivo de planilha que você pode importar no Google Drive</p>
+          </div>
+          <i data-lucide="download" class="w-4 h-4 text-slate-700"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== APPS SCRIPT GUIDE MODAL ==================== -->
+  <div id="appsScriptModal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-lg rounded-2xl p-4 shadow-xl space-y-3 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+        <h3 class="font-bold text-sm text-slate-800 flex items-center gap-1.5">
+          <i data-lucide="sheet" class="w-4 h-4 text-emerald-600"></i>
+          Conectar com Google Sheets (Passo a Passo)
+        </h3>
+        <button onclick="closeAppsScriptModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <div class="text-xs text-slate-600 space-y-2">
+        <p>Para conectar a sua planilha online sem precisar de cadastro complexo de API:</p>
+        <ol class="list-decimal list-inside space-y-1.5 pl-1 text-slate-700">
+          <li>Abra a sua planilha de despensa no <b>Google Planilhas</b> (Sheets).</li>
+          <li>No menu superior, clique em <b>Extensões &gt; Apps Script</b>.</li>
+          <li>Cole o código abaixo substituindo tudo o que estiver lá e clique no botão <b>Salvar</b> (ícone de disquete).</li>
+          <li>Clique em <b>Implantar &gt; Nova implantação</b>.</li>
+          <li>Em <i>"Selecione o tipo"</i>, escolha <b>App da Web</b>.</li>
+          <li>Em <i>"Quem pode acessar"</i>, selecione <b>Qualquer pessoa</b>.</li>
+          <li>Clique em <b>Implantar</b>, copie o <b>URL do app da Web</b> gerado e cole no campo de configuração do aplicativo!</li>
+        </ol>
+      </div>
+
+      <div class="space-y-1">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] font-bold text-slate-700">Código do Google Apps Script:</span>
+          <button onclick="copyAppsScriptCode()" class="text-xs text-emerald-600 font-semibold hover:underline flex items-center gap-1">
+            <i data-lucide="copy" class="w-3.5 h-3.5"></i> Copiar Código
+          </button>
+        </div>
+        <textarea id="appsScriptCodeArea" readonly class="w-full h-44 font-mono text-[11px] p-2 bg-slate-900 text-slate-200 rounded-lg select-all border border-slate-800"></textarea>
+      </div>
+
+      <button onclick="closeAppsScriptModal()" class="w-full bg-slate-800 text-white text-xs font-semibold py-2 rounded-lg">Entendido</button>
+    </div>
+  </div>
+
+  <!-- ==================== ERROR / INFO MODAL ==================== -->
+  <div id="errorModal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-md rounded-2xl p-5 shadow-xl space-y-3">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+        <h3 id="errorModalTitle" class="font-bold text-sm text-red-600 flex items-center gap-1.5">
+          <i data-lucide="alert-circle" class="w-4 h-4 text-red-600"></i>
+          Aviso
+        </h3>
+        <button onclick="closeErrorModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div id="errorModalContent" class="text-xs text-slate-700 whitespace-pre-line leading-relaxed max-h-60 overflow-y-auto bg-slate-50 p-3 rounded-lg border border-slate-200 font-sans select-all"></div>
+      <div class="flex gap-2 pt-1">
+        <button onclick="copyErrorModalText()" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold py-2 rounded-lg flex items-center justify-center gap-1">
+          <i data-lucide="copy" class="w-3.5 h-3.5"></i> Copiar Mensagem
+        </button>
+        <button onclick="closeErrorModal()" class="flex-1 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold py-2 rounded-lg">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== BOTTOM NAVIGATION (MOBILE) ==================== -->
+  <nav class="md:hidden fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-slate-200 z-30">
+    <div class="grid grid-cols-5 h-16">
+      <button onclick="switchTab('tab-shopping')" class="mobile-nav-btn flex flex-col items-center justify-center text-emerald-600 font-medium" data-target="tab-shopping">
+        <div class="relative">
+          <i data-lucide="check-square" class="w-5 h-5"></i>
+          <span id="mobileBadgeCount" class="hidden absolute -top-1.5 -right-2 bg-emerald-600 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center">0</span>
+        </div>
+        <span class="text-[10px] mt-1">Lista</span>
+      </button>
+
+      <button onclick="switchTab('tab-catalog')" class="mobile-nav-btn flex flex-col items-center justify-center text-slate-400 hover:text-slate-600" data-target="tab-catalog">
+        <div class="relative">
+          <i data-lucide="layers" class="w-5 h-5"></i>
+          <span id="mobileCatalogBadgeCount" class="hidden absolute -top-1.5 -right-2 bg-emerald-600 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center">0</span>
+        </div>
+        <span class="text-[10px] mt-1">Geral</span>
+      </button>
+
+      <button onclick="switchTab('tab-receipt')" class="mobile-nav-btn flex flex-col items-center justify-center text-slate-400 hover:text-slate-600" data-target="tab-receipt">
+        <i data-lucide="receipt" class="w-5 h-5"></i>
+        <span class="text-[10px] mt-1">Escanear</span>
+      </button>
+
+      <button onclick="switchTab('tab-prices')" class="mobile-nav-btn flex flex-col items-center justify-center text-slate-400 hover:text-slate-600" data-target="tab-prices">
+        <i data-lucide="trending-up" class="w-5 h-5"></i>
+        <span class="text-[10px] mt-1">Preços</span>
+      </button>
+
+      <button onclick="switchTab('tab-recipes')" class="mobile-nav-btn flex flex-col items-center justify-center text-slate-400 hover:text-slate-600" data-target="tab-recipes">
+        <i data-lucide="chef-hat" class="w-5 h-5"></i>
+        <span class="text-[10px] mt-1">Chef</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-lg transition-all duration-300 opacity-0 pointer-events-none flex items-center gap-2">
+    <i data-lucide="info" class="w-4 h-4 text-emerald-400"></i>
+    <span id="toastMsg">Mensagem</span>
+  </div>
+
+  <script src="local-api.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
