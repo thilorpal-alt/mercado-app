@@ -9,7 +9,7 @@
 
   const ready = (async () => {
     seed = await (await realFetch('catalogo.json')).json();
-    P = await (await realFetch('prompts.json')).json();
+    P = await realFetch('prompts.json').then(r => r.json()).catch(() => ({}));
     try { db = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
     if (!db) {
       db = { shopping: [], del: {}, settings: {},
@@ -59,6 +59,7 @@
 
   async function gem(contents, sys) {
     const key = db.settings.gemini_api_key;
+    if (!sys) throw new Error('o arquivo prompts.json não foi encontrado no site (confira o repositório do GitHub).');
     if (!key) throw new Error('Chave de API do Gemini não configurada. Por favor, configure-a na tela de Configurações.');
     const body = JSON.stringify({ contents, systemInstruction: { parts: [{ text: sys }] }, generationConfig: { temperature: 0.2, responseMimeType: 'application/json' } });
     let r;
@@ -84,6 +85,25 @@
       if (best) { matched.push({ shopping_item: best, receipt_item: r, confidence: bs }); rest.splice(rest.indexOf(best), 1); } else un.push(r);
     }
     return { matched, unmatched_receipt: un, remaining_shopping: rest };
+  }
+  const dupOf = rd => (rd.access_key ? db.receipts.find(r => r.access_key === rd.access_key)
+    : db.receipts.find(r => r.store_name === rd.store_name && r.purchase_date === rd.purchase_date && rd.total_amount > 0 && Math.abs(r.total_amount - rd.total_amount) < 0.005)) || null;
+  const dupInfo = d => d && { store_name: d.store_name, purchase_date: d.purchase_date, total_amount: d.total_amount };
+  function parseNfeXml(xml) {
+    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    if (doc.getElementsByTagName('parsererror').length) throw new Error('arquivo XML inválido');
+    const g = (el, t) => { const n = el.getElementsByTagName(t)[0]; return n ? n.textContent.trim() : ''; };
+    const dets = [...doc.getElementsByTagName('det')];
+    if (!dets.length) throw new Error('não encontrei itens (é uma NFC-e ou NF-e?)');
+    const inf = doc.getElementsByTagName('infNFe')[0], emit = doc.getElementsByTagName('emit')[0];
+    const key = ((inf && inf.getAttribute('Id')) || g(doc, 'chNFe') || '').replace(/\D/g, '');
+    const items = dets.map(d => {
+      const raw = g(d, 'xProd'), q = parseFloat(g(d, 'qCom')) || 1, up = parseFloat(g(d, 'vUnCom')) || 0, tot = parseFloat(g(d, 'vProd')) || q * up, u = g(d, 'uCom').toLowerCase();
+      const name = raw.toLowerCase().replace(/(^|\s)(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+      return { name, raw_name: raw, category: guess(name), quantity: q, unit: ['kg', 'g', 'l'].includes(u) ? u : 'un', unit_price: up, total_price: tot };
+    });
+    return { store_name: emit ? (g(emit, 'xFant') || g(emit, 'xNome')) : 'Supermercado', purchase_date: (g(doc, 'dhEmi') || g(doc, 'dEmi')).slice(0, 10) || today(),
+      total_amount: parseFloat(g(doc, 'vNF')) || items.reduce((t, i) => t + i.total_price, 0), access_key: key.length === 44 ? key : '', items };
   }
   async function sheetsSync() {
     const url = db.settings.google_sheets_webhook_url;
@@ -180,20 +200,33 @@
     }
     if (p === '/api/receipt/upload-photo') {
       let img = b.image_base64 || '', mime = 'image/jpeg'; if (!img) return err('Imagem não enviada', 400);
-      if (img.includes(',')) { const h = img.split(',')[0]; img = img.split(',').slice(1).join(','); if (h.includes('png')) mime = 'image/png'; else if (h.includes('webp')) mime = 'image/webp'; }
+      if (img.includes(',')) { const h = img.split(',')[0]; img = img.split(',').slice(1).join(','); if (h.includes('png')) mime = 'image/png'; else if (h.includes('webp')) mime = 'image/webp'; else if (h.includes('pdf')) mime = 'application/pdf'; }
       let rd; try { rd = await gem([{ parts: [{ inlineData: { mimeType: mime, data: img } }, { text: P.receipt_user }] }], P.receipt); } catch (e) { return err('Falha ao ler cupom fiscal: ' + e.message); }
-      return { success: true, receipt_data: rd, reconciliation: match(rd.items || [], db.shopping.filter(s => !s.checked)) };
+      return { success: true, receipt_data: rd, reconciliation: match(rd.items || [], db.shopping.filter(s => !s.checked)), duplicate_of: dupInfo(dupOf(rd)) };
+    }
+    if (p === '/api/receipt/import-xml') {
+      let rd; try { rd = parseNfeXml(b.xml || ''); } catch (e) { return err('Não consegui ler o XML: ' + e.message, 400); }
+      return { success: true, receipt_data: rd, reconciliation: match(rd.items, db.shopping.filter(s => !s.checked)), duplicate_of: dupInfo(dupOf(rd)) };
+    }
+    if (p === '/api/receipt/manual') {
+      const items = (b.items || []).filter(i => (i.name || '').trim()).map(i => {
+        const nm = i.name.trim(), name = nm[0].toUpperCase() + nm.slice(1), q = +i.quantity || 1, tot = +i.total_price || 0, c = catalogFor(name);
+        return { name, raw_name: name, category: c ? c.category : guess(name), quantity: q, unit: i.unit || 'un', unit_price: tot ? tot / q : 0, total_price: tot };
+      });
+      if (!items.length) return err('Informe pelo menos um item.', 400);
+      const rd = { store_name: (b.store_name || '').trim() || 'Compra sem nota', purchase_date: b.purchase_date || today(), total_amount: items.reduce((t, i) => t + i.total_price, 0), items };
+      return { success: true, receipt_data: rd, reconciliation: match(items, db.shopping.filter(s => !s.checked)) };
     }
     if (p === '/api/receipt/confirm-reconciliation') {
       const rd = b.receipt_data || {}, store = rd.store_name || 'Supermercado', date = rd.purchase_date || today(), items = rd.items || [], chk = b.items_to_check || [];
-      const rec = { id: uid(), store_name: store, total_amount: +rd.total_amount || 0, purchase_date: date, source: b.source || 'photo_gemini', items_count: items.length, raw_json: JSON.stringify(rd), u: now() };
+      const rec = { id: uid(), store_name: store, total_amount: +rd.total_amount || 0, purchase_date: date, source: b.source || 'photo_gemini', items_count: items.length, raw_json: JSON.stringify(rd), access_key: rd.access_key || '', u: now() };
       db.receipts.push(rec);
       items.forEach(i => {
         const name = i.name || i.raw_name, n = norm(name), cat = i.category || guess(name), up = +i.unit_price || 0, qty = +i.quantity || 1, unit = i.unit || 'un', tot = +i.total_price || qty * up;
         let pr = db.products.find(r => r.normalized_name === n);
-        const f = { display_name: name, category: cat, last_price: up, last_store: store, last_purchased_at: date, u: now() };
+        const hasP = up > 0, f = { display_name: name, category: cat, last_purchased_at: date, ...(hasP ? { last_price: up, last_store: store } : {}), u: now() };
         if (pr) Object.assign(pr, f); else { pr = { id: uid(), normalized_name: n, ...f }; db.products.push(pr); }
-        db.history.push({ id: uid(), product_id: pr.id, product_name: name, store_name: store, price: up, quantity: qty, unit, total_price: tot, purchase_date: date, receipt_id: rec.id, u: now() });
+        if (hasP) db.history.push({ id: uid(), product_id: pr.id, product_name: name, store_name: store, price: up, quantity: qty, unit, total_price: tot, purchase_date: date, receipt_id: rec.id, u: now() });
         db.pantry.push({ id: uid(), product_id: pr.id, name, category: cat, quantity: qty, unit, purchased_at: date, consumed: 0, u: now() });
       });
       const inCart = match(items, db.shopping.filter(s => s.checked)).matched.map(x => x.receipt_item);
