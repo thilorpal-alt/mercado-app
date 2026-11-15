@@ -16,6 +16,7 @@ const state = {
   currentTab: 'tab-shopping',
   completedExpanded: false,
   editingNoteId: null,
+  openMap: JSON.parse(localStorage.getItem('mercado.open') || '{}'),
   recognition: null,
   isListening: false,
   html5QrCode: null,
@@ -145,7 +146,8 @@ async function loadShoppingList(silent = false) {
 }
 
 function renderShoppingList() {
-  const activeItems = state.shoppingItems.filter(i => !i.checked);
+  const activeItems = state.shoppingItems.filter(i => !i.checked && !i.unavailable);
+  const unavailItems = state.shoppingItems.filter(i => !i.checked && i.unavailable);
   const checkedItems = state.shoppingItems.filter(i => i.checked);
 
   // Update counters & badges
@@ -186,20 +188,21 @@ function renderShoppingList() {
     let html = '';
     for (const [catName, items] of Object.entries(grouped)) {
       const catMeta = state.categories.find(c => c.name === catName) || { icon: '📦', color: 'bg-slate-100 text-slate-700' };
+      const open = isOpen('shop:' + catName, true);
       html += `
         <div class="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
           <!-- Category Header -->
-          <div class="px-3.5 py-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+          <div onclick="toggleSection('shop:${catName}', true)" class="px-3.5 py-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between cursor-pointer select-none">
             <span class="text-xs font-bold text-slate-700 flex items-center gap-1.5">
               <span>${catMeta.icon}</span> ${catName}
             </span>
             <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-200/70 text-slate-600">
-              ${items.length} ${items.length === 1 ? 'item' : 'itens'}
+              ${items.length} ${items.length === 1 ? 'item' : 'itens'} <i data-lucide="chevron-down" class="inline w-3 h-3 transition-transform ${open ? '' : '-rotate-90'}"></i>
             </span>
           </div>
 
           <!-- Items list -->
-          <div class="divide-y divide-slate-100">
+          <div class="divide-y divide-slate-100 ${open ? '' : 'hidden'}">
             ${items.map(item => `
               <div 
                 class="flex items-center justify-between px-3.5 py-3 hover:bg-slate-50 active:bg-slate-100 transition cursor-pointer select-none group"
@@ -219,6 +222,7 @@ function renderShoppingList() {
                   <span class="text-xs font-semibold text-slate-500 bg-slate-100 px-2 py-1 rounded-lg">
                     ${formatQuantity(item.quantity, item.unit)}
                   </span>
+                  <button onclick="event.stopPropagation(); setUnavailable(${item.id}, 1)" class="p-1.5 text-slate-300 hover:text-amber-600 rounded-lg hover:bg-amber-50 transition" title="Não encontrei (indisponível)"><i data-lucide="ban" class="w-4 h-4"></i></button>
                   <button 
                     onclick="event.stopPropagation(); deleteItem(${item.id})" 
                     class="p-1.5 text-slate-300 hover:text-red-500 rounded-lg hover:bg-red-50 transition"
@@ -233,7 +237,29 @@ function renderShoppingList() {
         </div>
       `;
     }
-    activeContainer.innerHTML = html;
+    activeContainer.innerHTML = `<div class="text-right -mb-1"><button onclick="toggleAllSections('shop')" class="text-[11px] text-slate-400 underline">Abrir/fechar todas</button></div>` + html;
+  }
+
+  // Seção "Indisponível" (não encontrados neste mercado)
+  if (unavailItems.length) {
+    const uo = isOpen('sec:unavail', false);
+    activeContainer.insertAdjacentHTML('beforeend', `
+      <div class="bg-amber-50/70 rounded-2xl border border-amber-200 overflow-hidden">
+        <div onclick="toggleSection('sec:unavail', false)" class="px-3.5 py-2.5 flex items-center justify-between cursor-pointer select-none">
+          <span class="text-xs font-bold text-amber-900">🚫 Indisponível <span class="font-semibold text-amber-700">(${unavailItems.length})</span></span>
+          <span class="flex items-center gap-2">
+            <button onclick="event.stopPropagation(); returnAllUnavailable()" class="text-[11px] font-semibold text-emerald-700 bg-white border border-emerald-200 rounded-lg px-2 py-1">Devolver todos à lista</button>
+            <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-amber-700 transition-transform ${uo ? '' : '-rotate-90'}"></i>
+          </span>
+        </div>
+        <div class="divide-y divide-amber-100 ${uo ? '' : 'hidden'}">
+          ${unavailItems.map(item => `
+            <div onclick="setUnavailable(${item.id}, 0)" class="flex items-center justify-between px-3.5 py-2.5 cursor-pointer select-none">
+              <div class="min-w-0"><p class="text-sm text-slate-700 truncate">${escapeHtml(item.name)}</p>${item.notes ? `<p class="text-[10px] text-slate-500 truncate">📝 ${escapeHtml(item.notes)}</p>` : ''}</div>
+              <span class="text-[11px] font-semibold text-emerald-700">↩ Devolver</span>
+            </div>`).join('')}
+        </div>
+      </div>`);
   }
 
   // Render Completed / In-Cart Items
@@ -343,6 +369,52 @@ async function saveItemNote(id) {
   }
 }
 
+const normName = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+const isOpen = (k, def) => (k in state.openMap ? state.openMap[k] : def);
+const saveOpen = () => { localStorage.setItem('mercado.open', JSON.stringify(state.openMap)); renderShoppingList(); renderCatalogCards(); };
+function toggleSection(k, def) { state.openMap[k] = !isOpen(k, def); saveOpen(); }
+function toggleAllSections(scope) {
+  const names = [...new Set((scope === 'shop' ? state.shoppingItems.filter(i => !i.checked && !i.unavailable) : state.catalog).map(i => i.category))];
+  const anyOpen = names.some(n => isOpen(scope + ':' + n, scope === 'shop'));
+  names.forEach(n => { state.openMap[scope + ':' + n] = !anyOpen; });
+  saveOpen();
+}
+const putItem = (id, body) => fetch('/api/shopping/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+async function setUnavailable(id, v) {
+  const it = state.shoppingItems.find(i => i.id === id);
+  if (it) { it.unavailable = v; if (v) it.checked = 0; renderShoppingList(); }
+  try { await putItem(id, { unavailable: v }); } catch (e) { loadShoppingList(); }
+}
+async function returnAllUnavailable() {
+  const list = state.shoppingItems.filter(i => i.unavailable && !i.checked);
+  list.forEach(i => { i.unavailable = 0; }); renderShoppingList();
+  await Promise.all(list.map(i => putItem(i.id, { unavailable: 0 })));
+  showToast('Itens devolvidos à lista!');
+}
+function askChoice(title, text, opts) {
+  return new Promise(res => {
+    const ov = document.createElement('div');
+    ov.className = 'fixed inset-0 z-[100] bg-black/40 flex items-end sm:items-center justify-center p-4';
+    ov.innerHTML = `<div class="bg-white rounded-2xl p-4 w-full max-w-sm space-y-2.5"><p class="text-sm font-bold text-slate-800">${title}</p><p class="text-xs text-slate-600">${escapeHtml(text)}</p>` +
+      opts.map(([v, l, p]) => `<button data-v="${v}" class="w-full py-2.5 rounded-xl text-sm font-semibold ${p ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700'}">${l}</button>`).join('') + '</div>';
+    ov.onclick = e => { const v = e.target.dataset ? e.target.dataset.v : null; if (v || e.target === ov) { ov.remove(); res(v || 'cancel'); } };
+    document.body.appendChild(ov);
+  });
+}
+async function resolveDuplicate(name, qty) {
+  const dup = state.shoppingItems.find(i => normName(i.name) === normName(name));
+  if (!dup) return 'add';
+  const where = dup.checked ? 'já está no carrinho' : dup.unavailable ? 'está em Indisponível' : 'já está na lista';
+  const opts = [];
+  if (!dup.checked && !dup.unavailable) opts.push(['sum', 'Somar à quantidade que já está lá', true]);
+  if (dup.unavailable) opts.push(['back', 'Devolver à lista', true]);
+  opts.push(['add', 'Adicionar mesmo assim'], ['cancel', 'Cancelar']);
+  const a = await askChoice('Item repetido', `“${dup.name}” ${where}. O que deseja fazer?`, opts);
+  if (a === 'sum') await putItem(dup.id, { quantity: (+dup.quantity || 1) + (+qty || 1) });
+  if (a === 'back') await putItem(dup.id, { unavailable: 0 });
+  return a;
+}
+
 function formatQuantity(qty, unit) {
   if (!qty) return '';
   const numStr = (qty % 1 === 0) ? qty.toString() : qty.toFixed(1);
@@ -357,32 +429,25 @@ function escapeHtml(str) {
 // Add Item from Form
 async function handleAddItem(e) {
   e.preventDefault();
-  const input = document.getElementById('itemInput');
-  const text = input.value.trim();
+  const input = document.getElementById('itemInput'), text = input.value.trim();
   if (!text) return;
-
-  // Check if multiple items or natural language was typed (e.g. "leite, cafe, tomate")
   if (text.includes(',') || text.toLowerCase().includes(' e ') || text.includes('\n')) {
     input.value = '';
     showToast('Identificando itens múltiplos...');
     await parseAndAddSpokenText(text);
     return;
   }
-
-  const noteInput = document.getElementById('itemNoteInput');
-  const note = noteInput ? noteInput.value.trim() : '';
+  const noteInput = document.getElementById('itemNoteInput'), note = noteInput ? noteInput.value.trim() : '';
+  const act = await resolveDuplicate(text, 1);
+  if (act === 'cancel') return;
   try {
-    const res = await fetch('/api/shopping', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: text, notes: note })
-    });
-    if (res.ok) {
-      input.value = '';
-      if (noteInput) noteInput.value = '';
-      await loadShoppingList();
-      showToast('Item adicionado à lista!');
+    if (act === 'add') {
+      const res = await fetch('/api/shopping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: text, notes: note }) });
+      if (!res.ok) throw new Error('falha');
     }
+    input.value = ''; if (noteInput) noteInput.value = '';
+    await loadShoppingList();
+    showToast(act === 'add' ? 'Item adicionado à lista!' : act === 'sum' ? 'Quantidade somada!' : 'Item devolvido à lista!');
   } catch (err) {
     showToast('Erro ao adicionar item.');
   }
@@ -554,6 +619,7 @@ function renderCatalogCards() {
     return;
   }
 
+  const forceOpen = !!state.catalogSearch || state.catalogCategory !== 'all';
   // Group by category
   const grouped = {};
   state.catalog.forEach(item => {
@@ -566,12 +632,14 @@ function renderCatalogCards() {
   for (const [catName, items] of Object.entries(grouped)) {
     const catMeta = (state.categories || []).find(c => c.name === catName) || { icon: '📦', color: 'bg-slate-100 text-slate-700' };
     const inListCount = items.filter(i => i.in_shopping_list).length;
+    const open = forceOpen || isOpen('cat:' + catName, false);
 
     html += `
       <div class="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
-        <div class="bg-slate-50/90 px-3.5 py-2.5 border-b border-slate-200 flex items-center justify-between">
+        <div onclick="toggleSection('cat:${catName}', false)" class="cursor-pointer select-none bg-slate-50/90 px-3.5 py-2.5 ${open ? 'border-b border-slate-200' : ''} flex items-center justify-between">
           <div class="flex items-center gap-2">
             <span class="text-base">${catMeta.icon}</span>
+            <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 transition-transform ${open ? '' : '-rotate-90'}"></i>
             <h3 class="text-xs font-bold text-slate-800">${catName}</h3>
             <span class="text-[10px] text-slate-500 font-semibold bg-white px-2 py-0.5 rounded-full border border-slate-200">
               ${items.length} itens
@@ -584,7 +652,7 @@ function renderCatalogCards() {
           ` : ''}
         </div>
 
-        <div class="p-2 sm:p-2.5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+        <div class="p-2 sm:p-2.5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 ${open ? '' : 'hidden'}">
     `;
 
     items.forEach(it => {
@@ -651,7 +719,7 @@ function renderCatalogCards() {
     `;
   }
 
-  container.innerHTML = html;
+  container.innerHTML = `<div class="text-right"><button onclick="toggleAllSections('cat')" class="text-[11px] text-slate-400 underline">Abrir/fechar todas</button></div>` + html;
   initLucide();
 }
 
@@ -702,6 +770,17 @@ async function handleAddCatalogItem() {
   if (!name) return;
 
   try {
+    const found = await (await fetch('/api/catalog?q=' + encodeURIComponent(name))).json();
+    const dup = (found.items || []).find(i => normName(i.name) === normName(name));
+    if (dup) {
+      const a = await askChoice('Item já existe', `“${dup.name}” já está no repositório (${dup.category}).`, [['view', 'Ver o item existente', true], ['cancel', 'Cancelar']]);
+      if (a === 'view') {
+        input.value = ''; state.openMap['cat:' + dup.category] = true; localStorage.setItem('mercado.open', JSON.stringify(state.openMap));
+        const si = document.getElementById('catalogSearchInput'); if (si) si.value = dup.name;
+        handleCatalogSearch(dup.name);
+      }
+      return;
+    }
     const res = await fetch('/api/catalog', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -781,18 +860,15 @@ function stopVoiceInput() {
 
 async function parseAndAddSpokenText(text) {
   try {
-    const res = await fetch('/api/shopping/parse-voice', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text, auto_add: true })
-    });
-    const data = await res.json();
-    if (data.count > 0) {
-      showToast(`${data.count} ${data.count === 1 ? 'item adicionado' : 'itens adicionados'} à lista!`);
-      await loadShoppingList();
-    } else {
-      showToast('Nenhum item identificado.');
+    const res = await fetch('/api/shopping/parse-voice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, auto_add: false }) });
+    const data = await res.json(); let n = 0;
+    for (const it of data.parsed_items || []) {
+      const act = await resolveDuplicate(it.name, it.quantity);
+      if (act === 'cancel') continue;
+      if (act === 'add') await fetch('/api/shopping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(it) });
+      n++; await loadShoppingList();
     }
+    showToast(n ? `${n} ${n === 1 ? 'item processado' : 'itens processados'}!` : 'Nenhum item adicionado.');
   } catch (err) {
     showToast('Erro ao processar fala.');
   }
