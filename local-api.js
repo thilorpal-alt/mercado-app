@@ -127,13 +127,24 @@
   const refresh = () => { if (window.loadShoppingList) loadShoppingList(); if (window.loadCatalog) loadCatalog(); };
   function queueSync() { clearTimeout(syncTimer); if (db.settings.backup_url) syncTimer = setTimeout(() => syncDrive(true).catch(() => {}), 8000); }
 
+  /* Leitura via <script> (JSONP): não depende de CORS, que o Apps Script não garante */
+  const jsonp = (url, code) => new Promise((res, rej) => {
+    const cb = '__mcb' + now(), el = document.createElement('script');
+    const end = () => { clearTimeout(t); delete window[cb]; el.remove(); };
+    const t = setTimeout(() => { end(); rej(new Error('o Apps Script não respondeu')); }, 25000);
+    window[cb] = d => { end(); res(d); };
+    el.onerror = () => { end(); rej(new Error('não consegui carregar o Apps Script (confira se o acesso é "Qualquer pessoa")')); };
+    el.src = url + (url.includes('?') ? '&' : '?') + 'code=' + encodeURIComponent(code || '') + '&callback=' + cb;
+    document.head.appendChild(el);
+  });
+
   window.syncDrive = async (silent) => {
     await ready; const { backup_url: url, backup_code: code } = db.settings;
     if (!url) { status('Configure a URL do Apps Script primeiro.'); return; }
     if (!navigator.onLine) { status('Sem internet. Sincroniza quando voltar.'); return; }
     try {
       if (!silent) status('Sincronizando...');
-      const r = await (await realFetch(url + (url.includes('?') ? '&' : '?') + 'code=' + encodeURIComponent(code || ''))).json();
+      const r = await jsonp(url, code);
       if (!r.ok) throw new Error('código secreto não confere');
       if (r.data) mergeIn(r.data);
       save(false);
