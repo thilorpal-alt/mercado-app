@@ -1005,7 +1005,9 @@ async function processReceiptPhoto() {
     const data = await res.json();
     showReceiptLoading(false);
 
-    if (data.success && data.receipt_data) {
+    if (data.success && data.receipt_data && data.duplicate_of) {
+      await openReceiptResult(data, 'photo_gemini');
+    } else if (data.success && data.receipt_data) {
       showReconciliationModal({
         source: 'photo_gemini',
         receipt_data: data.receipt_data,
@@ -1635,4 +1637,98 @@ function copyAppsScriptCode() {
   navigator.clipboard.writeText(area.value).then(() => {
     showToast('Código copiado para a área de transferência!');
   });
+}
+
+
+// ==================== PARTE B: PDF/XML e COMPRA SEM NOTA ====================
+document.addEventListener('DOMContentLoaded', () => {
+  const bar = document.getElementById('btnModeQr') && document.getElementById('btnModeQr').parentElement;
+  if (!bar) return;
+  bar.insertAdjacentHTML('afterend', `
+    <div class="grid grid-cols-2 gap-2 mb-4">
+      <button onclick="document.getElementById('receiptDocInput').click()" class="py-2.5 text-xs font-semibold rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800">📄 Importar PDF ou XML</button>
+      <button onclick="openManualPurchase()" class="py-2.5 text-xs font-semibold rounded-xl bg-amber-50 border border-amber-200 text-amber-900">🧺 Compra sem nota</button>
+      <input type="file" id="receiptDocInput" accept=".pdf,.xml,application/pdf,text/xml,application/xml" class="hidden" onchange="handleReceiptDoc(event)">
+    </div>`);
+});
+
+async function openReceiptResult(data, source) {
+  if (!data.success || !data.receipt_data) { alert(`Não foi possível processar a nota: ${data.error || 'tente novamente.'}`); return; }
+  if (data.duplicate_of) {
+    const d = data.duplicate_of;
+    const a = await askChoice('Nota possivelmente repetida', `Já existe uma nota de ${d.store_name} em ${formatDate(d.purchase_date)} no valor de R$ ${Number(d.total_amount).toFixed(2)}. Importar mesmo assim?`, [['cancel', 'Cancelar', true], ['go', 'Importar mesmo assim']]);
+    if (a !== 'go') return;
+  }
+  showReconciliationModal({ source, receipt_data: data.receipt_data, reconciliation: data.reconciliation });
+}
+
+async function handleReceiptDoc(e) {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  const isXml = /\.xml$/i.test(f.name) || /xml/.test(f.type);
+  showReceiptLoading(true);
+  try {
+    const body = isXml ? { xml: await f.text() }
+      : { image_base64: await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = no; r.readAsDataURL(f); }) };
+    const res = await fetch(isXml ? '/api/receipt/import-xml' : '/api/receipt/upload-photo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json();
+    showReceiptLoading(false);
+    await openReceiptResult(data, isXml ? 'xml' : 'pdf_gemini');
+  } catch (err) {
+    showReceiptLoading(false);
+    alert('Erro ao ler o arquivo.');
+  }
+}
+
+function openManualPurchase() {
+  closeManualPurchase();
+  const stores = [...new Set((state.products || []).map(p => p.last_store).filter(Boolean))];
+  const ov = document.createElement('div');
+  ov.id = 'manualModal';
+  ov.className = 'fixed inset-0 z-[90] bg-black/40 flex items-end sm:items-center justify-center';
+  ov.innerHTML = `
+    <div class="bg-white w-full sm:max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl p-4 space-y-3">
+      <div class="flex items-center justify-between"><h3 class="text-sm font-bold text-slate-800">🧺 Compra sem nota</h3><button onclick="closeManualPurchase()" class="text-slate-400 text-lg px-2">✕</button></div>
+      <div class="grid grid-cols-2 gap-2">
+        <input id="mpStore" list="mpStores" placeholder="Local (ex: Feira da Lagoa)" class="px-3 py-2 border border-slate-200 rounded-lg text-xs">
+        <input id="mpDate" type="date" value="${new Date().toISOString().slice(0, 10)}" class="px-3 py-2 border border-slate-200 rounded-lg text-xs">
+      </div>
+      <datalist id="mpStores">${stores.map(s => `<option value="${escapeHtml(s)}">`).join('')}</datalist>
+      <datalist id="mpNames"></datalist>
+      <div id="mpRows" class="space-y-2"></div>
+      <button onclick="addManualRow()" class="text-xs font-semibold text-emerald-700">+ adicionar item</button>
+      <p class="text-[11px] text-slate-500">O valor (opcional) é o total pago pelo item. Na próxima tela você confirma e os itens da sua lista recebem baixa.</p>
+      <button onclick="submitManualPurchase()" class="w-full py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold">Continuar</button>
+    </div>`;
+  document.body.appendChild(ov);
+  addManualRow(); addManualRow();
+  fetch('/api/catalog').then(r => r.json()).then(d => {
+    const dl = document.getElementById('mpNames');
+    if (dl) dl.innerHTML = (d.items || []).map(i => `<option value="${escapeHtml(i.name)}">`).join('');
+  });
+}
+function addManualRow() {
+  document.getElementById('mpRows').insertAdjacentHTML('beforeend', `
+    <div class="mp-row grid grid-cols-12 gap-1.5">
+      <input list="mpNames" placeholder="Item" class="mp-name col-span-5 px-2 py-2 border border-slate-200 rounded-lg text-xs">
+      <input type="number" step="any" min="0" placeholder="Qtd" value="1" class="mp-qty col-span-2 px-2 py-2 border border-slate-200 rounded-lg text-xs">
+      <select class="mp-unit col-span-2 px-1 py-2 border border-slate-200 rounded-lg text-xs"><option>un</option><option>kg</option><option>g</option><option>l</option><option>maço</option></select>
+      <input type="number" step="0.01" min="0" placeholder="R$" class="mp-price col-span-3 px-2 py-2 border border-slate-200 rounded-lg text-xs">
+    </div>`);
+}
+function closeManualPurchase() { const m = document.getElementById('manualModal'); if (m) m.remove(); }
+async function submitManualPurchase() {
+  const items = [...document.querySelectorAll('#mpRows .mp-row')].map(r => ({
+    name: r.querySelector('.mp-name').value.trim(), quantity: parseFloat(r.querySelector('.mp-qty').value) || 1,
+    unit: r.querySelector('.mp-unit').value, total_price: parseFloat(r.querySelector('.mp-price').value) || 0
+  })).filter(i => i.name);
+  if (!items.length) { showToast('Informe pelo menos um item.'); return; }
+  try {
+    const res = await fetch('/api/receipt/manual', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ store_name: document.getElementById('mpStore').value.trim(), purchase_date: document.getElementById('mpDate').value, items }) });
+    const data = await res.json();
+    if (!data.success) { showToast(data.error || 'Erro ao registrar a compra.'); return; }
+    closeManualPurchase();
+    showReconciliationModal({ source: 'manual', receipt_data: data.receipt_data, reconciliation: data.reconciliation });
+  } catch (err) { showToast('Erro ao registrar a compra.'); }
 }
