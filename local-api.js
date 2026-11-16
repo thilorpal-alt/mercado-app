@@ -74,7 +74,7 @@
     if (!key) throw new Error('Chave de API do Gemini não configurada. Por favor, configure-a na tela de Configurações.');
     const body = JSON.stringify({ contents, systemInstruction: { parts: [{ text: sys }] }, generationConfig: { temperature: 0.2, responseMimeType: 'application/json' } });
     let r;
-    for (const m of ['gemini-2.5-flash', 'gemini-1.5-flash']) {
+    for (const m of ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-2.5-flash']) {
       r = await realFetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
       if (r.status !== 404) break;
     }
