@@ -311,7 +311,34 @@
     document.head.appendChild(el);
   });
 
-  window.syncDrive = async (silent) => {
+  /* ---------- Aviso de backup ---------- */
+  const DAY = 864e5, SYNC_WAIT = 2000;
+  function hideBanner() { const e = document.getElementById('backupBanner'); if (e) e.remove(); }
+  function showBanner(t) {
+    if (!document.body) return;
+    let e = document.getElementById('backupBanner');
+    if (!e) {
+      e = document.createElement('div'); e.id = 'backupBanner';
+      e.style.cssText = 'position:fixed;left:8px;right:8px;bottom:76px;z-index:9999;background:#fef3c7;color:#78350f;border:1px solid #f59e0b;border-radius:12px;padding:10px 12px;font:600 13px system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.25)';
+      e.onclick = () => { if (db.settings.backup_url) window.syncDrive(); else hideBanner(); };
+      document.body.appendChild(e);
+    }
+    e.textContent = t;
+  }
+  function checkBackup() {
+    const hasData = ['shopping', 'history', 'pantry', 'receipts'].some(t => (db[t] || []).length);
+    if (!hasData) return;
+    const last = Math.max(db.settings.last_ok || 0, db.settings.last_export || 0), url = db.settings.backup_url;
+    const days = Math.floor((now() - last) / DAY);
+    if (!last) showBanner('⚠️ Nenhum backup confirmado ainda. ' + (url ? 'Toque para sincronizar com o Drive.' : 'Configure o Drive em Configurações ou exporte um arquivo.'));
+    else if (days >= 3) showBanner(`⚠️ Último backup confirmado há ${days} dias. ` + (url ? 'Toque para sincronizar.' : 'Exporte um arquivo em Configurações.'));
+  }
+  const markExport = () => { db.settings.last_export = now(); save(false); hideBanner(); };
+  document.addEventListener('DOMContentLoaded', async () => { await ready; checkBackup(); });
+
+  let syncing = null;
+  window.syncDrive = silent => syncing || (syncing = syncOnce(silent).finally(() => { syncing = null; }));
+  async function syncOnce(silent) {
     await ready; const { backup_url: url, backup_code: code } = db.settings;
     if (!url) { status('Configure a URL do Apps Script primeiro.'); return; }
     if (!navigator.onLine) { status('Sem internet. Sincroniza quando voltar.'); return; }
@@ -321,10 +348,19 @@
       if (!r.ok) throw new Error('código secreto não confere');
       if (r.data) mergeIn(r.data);
       save(false);
-      await realFetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ code, data: payload() }) });
-      status('Sincronizado às ' + new Date().toLocaleTimeString('pt-BR')); refresh();
-    } catch (e) { status('Falha ao sincronizar: ' + e.message); }
-  };
+      const pl = payload(); pl.sync_id = String(uid());
+      await realFetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ code, data: pl }) });
+      let ok = false;
+      for (let i = 0; i < 3 && !ok; i++) {
+        await new Promise(res => setTimeout(res, SYNC_WAIT));
+        const c = await jsonp(url, code);
+        ok = !!(c.ok && c.data && c.data.sync_id === pl.sync_id);
+      }
+      if (!ok) throw new Error('o Drive não confirmou o recebimento, então seus dados NÃO estão salvos lá. Veja "Execuções" no Apps Script');
+      db.settings.last_ok = now(); save(false); hideBanner();
+      status('Sincronizado e confirmado no Drive às ' + new Date().toLocaleTimeString('pt-BR')); refresh();
+    } catch (e) { status('Falha ao sincronizar: ' + e.message); showBanner('⚠️ Backup no Drive não confirmado. Toque para tentar de novo.'); }
+  }
   const rstatus = t => { const e = document.getElementById('recipesStatus'); if (e) e.textContent = t; };
   window.syncRecipes = async () => {
     await ready; const { backup_url: url, backup_code: code } = db.settings;
@@ -349,8 +385,8 @@
   };
   window.exportBackup = async () => {
     await ready; const f = new File([JSON.stringify(payload())], 'mercado-backup-' + new Date().toISOString().slice(0, 10) + '.json', { type: 'application/json' });
-    if (navigator.canShare && navigator.canShare({ files: [f] })) { try { await navigator.share({ files: [f], title: 'Backup Mercado' }); return; } catch (e) { if (e.name === 'AbortError') return; } }
-    const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; a.click();
+    if (navigator.canShare && navigator.canShare({ files: [f] })) { try { await navigator.share({ files: [f], title: 'Backup Mercado' }); markExport(); return; } catch (e) { if (e.name === 'AbortError') return; } }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; a.click(); markExport();
   };
   window.importBackup = async (ev) => {
     await ready; const f = ev.target.files[0]; if (!f) return;
