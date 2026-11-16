@@ -73,11 +73,13 @@
     if (!sys) throw new Error('não consegui carregar o prompts.json (' + (Perr || 'conteúdo sem as chaves esperadas') + '). Confira se ele está na raiz do repositório, com esse nome exato.');
     if (!key) throw new Error('Chave de API do Gemini não configurada. Por favor, configure-a na tela de Configurações.');
     const body = JSON.stringify({ contents, systemInstruction: { parts: [{ text: sys }] }, generationConfig: { temperature: 0.2, responseMimeType: 'application/json' } });
-    let r;
+    let r = null, last = null;
     for (const m of ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest', 'gemini-3.1-flash-lite']) {
-      r = await realFetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      try { r = await realFetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }); }
+      catch (e) { last = e; continue; }
       if (![404, 429, 500, 503, 504].includes(r.status)) break;
     }
+    if (!r) throw new Error('não consegui falar com o Gemini (' + (last && last.message) + '). Confira a internet do celular; se o arquivo for grande, tente um menor ou uma foto.');
     if (!r.ok) { let t = await r.text(); try { t = JSON.parse(t).error.message; } catch (e) {} throw new Error(`Erro na API do Gemini (${r.status}): ${t}` + ([429, 503].includes(r.status) ? ' (tentei todos os modelos: o Gemini está sobrecarregado ou o limite diário gratuito acabou; tente de novo em alguns minutos)' : '')); }
     const d = await r.json();
     return JSON.parse(d.candidates[0].content.parts[0].text.trim().replace(/^```json\s*/, '').replace(/```$/, ''));
