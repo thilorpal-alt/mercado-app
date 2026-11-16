@@ -7,9 +7,18 @@
   const cmp = (a, b) => a.localeCompare(b, 'pt');
   const guess = n => { n = n.toLowerCase(); for (const id in seed.keywords) if (seed.keywords[id].some(k => n.includes(k))) return seed.categories.find(c => c.id === id).name; return 'Mercearia e Despensa'; };
 
+  let Perr = '';
+  async function loadP() {
+    try {
+      const r = await realFetch('prompts.json', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      P = await r.json(); Perr = '';
+    } catch (e) { P = P && P.receipt ? P : {}; Perr = e.message; }
+  }
+
   const ready = (async () => {
     seed = await (await realFetch('catalogo.json')).json();
-    P = await realFetch('prompts.json').then(r => r.json()).catch(() => ({}));
+    await loadP();
     try { db = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
     if (!db) {
       db = { shopping: [], del: {}, settings: {},
@@ -53,13 +62,15 @@
     });
   }
 
+  const RKEY = 'mercado.receitas';
+  const loadRecipes = () => { try { return JSON.parse(localStorage.getItem(RKEY)); } catch (e) { return null; } };
   const err = (m, st = 500) => [st, { error: m, success: false }];
   const today = () => new Date().toISOString().slice(0, 10);
   const pantryList = () => db.pantry.filter(r => !r.consumed).sort((a, c) => cmp(a.category, c.category) || c.purchased_at.localeCompare(a.purchased_at));
 
   async function gem(contents, sys) {
     const key = db.settings.gemini_api_key;
-    if (!sys) throw new Error('o arquivo prompts.json não foi encontrado no site (confira o repositório do GitHub).');
+    if (!sys) throw new Error('não consegui carregar o prompts.json (' + (Perr || 'conteúdo sem as chaves esperadas') + '). Confira se ele está na raiz do repositório, com esse nome exato.');
     if (!key) throw new Error('Chave de API do Gemini não configurada. Por favor, configure-a na tela de Configurações.');
     const body = JSON.stringify({ contents, systemInstruction: { parts: [{ text: sys }] }, generationConfig: { temperature: 0.2, responseMimeType: 'application/json' } });
     let r;
@@ -188,9 +199,26 @@
     if (p === '/api/sheets/template') return { template: P.sheets_template };
     if (p === '/api/sheets/sync') { try { return await sheetsSync(); } catch (e) { return err('Erro na sincronização com Google Sheets: ' + e.message); } }
     if (p === '/api/pantry/suggest-recipes') {
-      let msg = 'Ingredientes disponíveis na minha casa agora:\n' + pantryList().map(i => `${i.name} (${i.quantity} ${i.unit})`).join(', ');
-      if (b.craving) msg += `\n\nObservação ou preferência do usuário: Quero algo do tipo '${b.craving}'.`;
-      try { return await gem([{ parts: [{ text: msg }] }], P.recipes); } catch (e) { return err('Erro ao sugerir receitas: ' + e.message); } }
+      const pant = pantryList();
+      let rc = loadRecipes();
+      if (!rc && db.settings.backup_url) { await window.syncRecipes(); rc = loadRecipes(); }
+      rc = rc || { receitas: [], ideias: [] };
+      const toks = new Set(pant.flatMap(i => norm(i.name).split(/\s+/)).filter(w => w.length >= 4));
+      const score = r => { const t = norm(r.texto); let n = 0; toks.forEach(w => { if (t.includes(w)) n++; }); return n; };
+      const docs = [...rc.receitas].sort((a, c) => score(c) - score(a)).slice(0, 40);
+      let msg = 'ACERVO - RECEITAS (preparações completas minhas):\n' + (docs.length ? docs.map(r => `[id=${r.id}] ${r.nome}\n${r.texto.slice(0, 6000)}`).join('\n\n---\n\n') : '(nenhuma receita sincronizada)')
+        + '\n\nACERVO - IDEIAS DE PRATOS (só ingredientes):\n' + (rc.ideias.length ? rc.ideias.slice(0, 150).map(i => `- ${i.tema}${i.temporada ? ` (Temporada ${i.temporada}, ep. ${i.episodio})` : ''}: ${i.ingredientes}`).join('\n') : '(nenhuma)')
+        + '\n\nDESPENSA ATUAL:\n' + (pant.map(i => `${i.name} (${i.quantity} ${i.unit})`).join(', ') || '(vazia)');
+      if (b.craving) msg += `\n\nPedido do usuário: quero algo do tipo '${b.craving}'.`;
+      try {
+        const out = await gem([{ parts: [{ text: msg }] }], P.recipes);
+        (out.recipes || []).forEach(r => {
+          const d = rc.receitas.find(x => x.id === r.source_id), i = rc.ideias.find(x => norm(x.tema) === norm(r.title) || (r.source && norm(r.source).includes(norm(x.tema))));
+          r.source_url = (d && d.url) || (i && i.link) || '';
+        });
+        return out;
+      } catch (e) { return err('Erro ao sugerir receitas: ' + e.message); }
+    }
     if (p === '/api/receipt/scan-qr') {
       const u = (b.url || '').trim(); if (!u) return err('URL do QR Code não informada', 400);
       let k = ''; try { k = (new URL(u).searchParams.get('p') || '').split('|')[0]; } catch (e) {}
@@ -243,6 +271,7 @@
     const u = new URL(url, location.href);
     if (!u.pathname.includes('/api/') || u.origin !== location.origin) return realFetch(url, opts);
     await ready;
+    if (!P || !P.receipt) await loadP();
     let b = {}; try { b = JSON.parse(opts.body || '{}'); } catch (e) {}
     const p = u.pathname.slice(u.pathname.indexOf('/api/'));
     let r = await route((opts.method || 'GET').toUpperCase(), p, u.searchParams, b), s = 200;
@@ -272,13 +301,13 @@
   function queueSync() { clearTimeout(syncTimer); if (db.settings.backup_url) syncTimer = setTimeout(() => syncDrive(true).catch(() => {}), 8000); }
 
   /* Leitura via <script> (JSONP): não depende de CORS, que o Apps Script não garante */
-  const jsonp = (url, code) => new Promise((res, rej) => {
+  const jsonp = (url, code, extra = '', ms = 25000) => new Promise((res, rej) => {
     const cb = '__mcb' + now(), el = document.createElement('script');
     const end = () => { clearTimeout(t); delete window[cb]; el.remove(); };
-    const t = setTimeout(() => { end(); rej(new Error('o Apps Script não respondeu')); }, 25000);
+    const t = setTimeout(() => { end(); rej(new Error('o Apps Script não respondeu')); }, ms);
     window[cb] = d => { end(); res(d); };
     el.onerror = () => { end(); rej(new Error('não consegui carregar o Apps Script (confira se o acesso é "Qualquer pessoa")')); };
-    el.src = url + (url.includes('?') ? '&' : '?') + 'code=' + encodeURIComponent(code || '') + '&callback=' + cb;
+    el.src = url + (url.includes('?') ? '&' : '?') + 'code=' + encodeURIComponent(code || '') + extra + '&callback=' + cb;
     document.head.appendChild(el);
   });
 
@@ -296,6 +325,24 @@
       status('Sincronizado às ' + new Date().toLocaleTimeString('pt-BR')); refresh();
     } catch (e) { status('Falha ao sincronizar: ' + e.message); }
   };
+  const rstatus = t => { const e = document.getElementById('recipesStatus'); if (e) e.textContent = t; };
+  window.syncRecipes = async () => {
+    await ready; const { backup_url: url, backup_code: code } = db.settings;
+    if (!url) { rstatus('Configure primeiro a URL do Apps Script em "Backup e Sincronização".'); return false; }
+    if (!navigator.onLine) { rstatus('Sem internet.'); return false; }
+    try {
+      rstatus('Lendo receitas do Drive... (pode levar um minuto)');
+      const r = await jsonp(url, code, '&action=receitas', 120000);
+      if (!r.ok) throw new Error('código secreto não confere');
+      if (!r.receitas) throw new Error('atualize o Apps Script para a versão nova e reimplante');
+      localStorage.setItem(RKEY, JSON.stringify({ at: now(), receitas: r.receitas, ideias: r.ideias || [], ignorados: r.ignorados || [] }));
+      rstatus(`${r.receitas.length} receitas e ${(r.ideias || []).length} ideias de pratos carregadas` + ((r.ignorados || []).length ? `. Ignorados (não são Docs/texto): ${r.ignorados.length}` : '') + '.');
+      return true;
+    } catch (e) { rstatus('Falha ao ler receitas: ' + e.message); return false; }
+  };
+  document.addEventListener('DOMContentLoaded', () => {
+    const rc = loadRecipes(); if (rc) rstatus(`${rc.receitas.length} receitas e ${rc.ideias.length} ideias de pratos (atualizado em ${new Date(rc.at).toLocaleDateString('pt-BR')}).`);
+  });
   window.saveBackupSettings = async () => {
     await ready; db.settings.backup_url = document.getElementById('backupUrlInput').value.trim();
     db.settings.backup_code = document.getElementById('backupCodeInput').value.trim(); save(false); syncDrive();
